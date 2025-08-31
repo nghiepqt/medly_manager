@@ -1,106 +1,185 @@
-## Backend (FastAPI + PostgreSQL)
+# Medly Manager — Medical Booking System
 
-1) Create and activate venv
-2) pip install -r backend/requirements.txt
-3) Set DATABASE_URL in backend/.env (copy backend/.env.example)
-4) Run migrations: alembic upgrade head
-5) Start server: uvicorn backend.main:app --reload
+Mobile‑first appointment booking and schedule management for hospitals and clinics.
 
-### Seeding hospitals/departments/doctors via YAML
+- Frontend: Next.js App Router + React + Tailwind CSS (mobile‑first UX)
+- Backend: FastAPI + SQLAlchemy + PostgreSQL
 
-- Place a YAML file at `backend/seed/hospitals.yaml` (sample provided) or set an environment variable `SEED_YAML` to an absolute path of your YAML file.
-- On first startup, the app will read the YAML and idempotently upsert Hospitals, Departments, and Doctors.
-- If the YAML is missing or fails to load, a tiny built-in sample seed is applied.
 
-YAML shape:
+## Features
 
-```yaml
-hospitals:
-	- name: "Hospital A"
-		departments:
-			- name: "Cardiology"
-				doctors:
-					- name: "Dr. Alice"
-					- name: "Dr. Bob"
+- 15‑minute appointment booking with server‑side validation
+	- Must fall inside doctor “available” windows
+	- Must not overlap “out‑of‑office” (OOO) windows
+	- Must not collide with existing appointments (busy derived from appointments)
+- Day/week scheduler for admins
+	- Drag to select, drag/resize windows, multi‑select doctors (Explorer‑style)
+	- Bulk adjust available/OOO by hospital/department/doctor over date ranges
+	- Auto‑refresh every 5 minutes; background toast
+- “Giấy hẹn khám” printable slip for user appointments
+- Sequence number (STT) per doctor per day, auto‑assigned on creation
+- Seed/reset utilities and debug endpoints
+
+
+## Repository layout
+
+- `backend/` — FastAPI app, models, migrations, seed utilities
+- `src/` — Next.js frontend (App Router)
+- Root config files: `package.json`, `eslint.config.mjs`, `postcss.config.mjs`, `tsconfig.json`, etc.
+
+
+## Prerequisites
+
+- Node.js 18+ (or 20+ recommended)
+- Python 3.11+ (3.12 OK)
+- PostgreSQL 14+ (17 OK)
+- Windows PowerShell (examples use PowerShell commands)
+
+
+## Quick start (Windows)
+
+1) Backend: create venv and install
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
 ```
-This is a mobile-first Next.js app with a voice agent that helps book hospital appointments. Frontend: Next 15 + React 19 + Tailwind v4. Backend: Python FastAPI (stub, in-memory), database placeholder for PostgreSQL 17.
 
-Quick start
+2) Database: configure env and migrate
 
-Frontend
+```powershell
+# Create a DB and user as needed, then set DATABASE_URL in backend/.env
+Copy-Item backend/.env.example backend/.env
+# Edit backend/.env and set e.g.:
+# DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/medly
 
-1. Create a `.env.local` file and set the backend URL (default matches local backend):
+# Run Alembic migrations
+$env:DATABASE_URL = (Get-Content backend/.env | Where-Object { $_ -match '^DATABASE_URL=' } | ForEach-Object { ($_ -split '=',2)[1] })
+alembic -c backend/alembic.ini upgrade head
+```
 
-	NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+3) Start backend server
 
-2. Install and run dev server:
+```powershell
+uvicorn backend.main:app --reload --port 8000
+```
 
-	npm install
-	npm run dev
+4) Frontend: configure and run
 
-Backend (Python 3.12)
-
-1. Create venv and install deps:
-
-	python -m venv .venv
-	.\.venv\Scripts\activate
-	pip install -r backend/requirements.txt
-
-2. Setup database (PostgreSQL 17):
-
-	- Create database `medly` and user if needed.
-	- Copy env: `cp backend/.env.example backend/.env` and adjust.
-
-3. Run migrations:
-
-	$env:DATABASE_URL=(Get-Content backend/.env | ForEach-Object { if($_ -match "^DATABASE_URL=") { ($_ -split '=',2)[1] } })
-	alembic -c backend/alembic.ini upgrade head
-
-4. Run server:
-
-	uvicorn backend.main:app --reload --port 8000
-
-Pages
-
-- /: Voice agent flow
-- /history: Booking history (conversation summaries)
-- /upcoming: Upcoming appointments
-- /conversations: Conversation history list
-- /dev: Dev mode schedule grid (placeholder UI)
-	- API: GET /api/dev/schedule?date=YYYY-MM-DD&range=day|week, PUT /api/dev/slots, DELETE /api/dev/slots/{id}
-	- UI sẽ được nâng cấp để hỗ trợ drag-resize trên desktop.
-
-Database
-
-- Currently using in-memory stores. Replace with PostgreSQL 17 later.
-
-```bash
+```powershell
+# In project root
+Set-Content -Path .env.local -Value "NEXT_PUBLIC_BACKEND_URL=http://localhost:8000"
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Open http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Backend details
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Environment
 
-## Learn More
+- `backend/.env` with `DATABASE_URL` (PostgreSQL)
+- CORS is open during development
 
-To learn more about Next.js, take a look at the following resources:
+### Models (simplified)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Hospital(id, name, address?)
+- Department(id, hospital_id, name)
+- Doctor(id, department_id, name, phone?, roles?)
+- User(id, name, phone, cccd?)
+- Appointment(id, user_id, doctor_id, when, stt, need?, symptoms?, created_at, content JSON)
+- ScheduleWindow(id, doctor_id, start, end, kind: available|ooo)
+- Room(id, hospital_id, department_id, code, name?)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Notes:
+- Busy is derived from Appointment (15‑minute blocks). Slots table is not used.
+- STT (sequence number) is computed per doctor per day when an appointment is created. A startup best‑effort migration backfills missing STT.
 
-## Deploy on Vercel
+### Seeding and utilities
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- On startup, the backend will seed from two canonical JSON files if present
+	(via `seed_two_files_only`).
+- Admin endpoints:
+	- POST `/api/_admin/reset-and-seed` — reset core tables and reseed hospitals/departments/doctors
+	- POST `/api/_admin/seed-default-schedule?weeks=1&fill_ooo=true` — create default working hours and optional OOO
+	- POST `/api/_admin/seed` — flexible seeding from files/folders
+- Dev schedule windows:
+	- GET `/api/dev/schedule?date_str=YYYY-MM-DD&range=day|week[&hospital_id=ID]`
+	- PUT `/api/dev/windows` — upsert a single window (available|ooo)
+	- DELETE `/api/dev/windows/{id}` — delete a window
+	- POST `/api/dev/windows/bulk-adjust` — bulk rules over a date range
+- Content backfill (snapshot JSON in Appointment.content):
+	- GET `/api/_debug/all-appointments-enriched`
+	- POST `/api/_admin/appointments/{id}/content` — overwrite content for an appointment
+- Rooms lookup:
+	- GET `/api/rooms[?hospital_id=..&department_id=..]`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Core booking endpoints (high‑level)
+
+- POST `/api/users` — create/fetch by phone and name
+- POST `/api/book` — create a booking (15‑minute)
+- POST `/api/bookings` — external ingest (ensures entities), stores a content snapshot
+- GET `/api/bookings[?userId=]` — list bookings (id, created_at, stt, content)
+- GET `/api/bookings/{id}` — booking detail (id, created_at, stt, content)
+- GET `/api/appointments/lookup?doctor_id=&start=` — find appointment in a 15‑minute window
+- GET `/api/upcoming[?userId=]` — upcoming appointments (includes stt)
+- GET `/api/hospital-users[?hospitalId=]` — users with appointments in each hospital
+- GET `/api/hospital-user-profile?hospitalId=&userId=` — profile + appointments in that hospital (includes stt)
+- GET `/api/hospitals/upcoming` — upcoming by hospital (includes stt)
+
+Validation rules enforced by the server:
+1) The 15‑minute slot must be fully inside at least one Available window
+2) Must not overlap any OOO window
+3) Must not overlap any existing appointment (busy)
+
+
+## Frontend details
+
+- Next.js App Router app in `src/app`
+- Pages of note:
+	- `/dev` — Admin schedule grid (day/week), drag‑resize, multi‑select, bulk adjust
+	- `/user-appointments` — Hospitals → users; profile view renders a printable “Giấy hẹn khám” slip; shows STT when available
+	- Other supporting pages (history, conversations) may be stubs or WIP
+- Configure backend base URL via `.env.local`:
+	- `NEXT_PUBLIC_BACKEND_URL=http://localhost:8000`
+	- The frontend prefers relative `/api` rewrites when available
+
+Scheduler UI hints:
+- Day view (24h): double‑click to create a 60‑minute Available block, drag to select any span, drag/resize existing blocks (15‑minute snapping)
+- Multi‑select doctors with Ctrl/Cmd and Shift (range in same department)
+- Fixed action bar offers “Điều chỉnh” (bulk adjust) and “Xóa” of existing windows
+
+
+## Scripts (optional)
+
+Some helper scripts live in `backend/` (if present in your branch):
+
+- `seed_demo_users_and_appointments.py` — creates demo users and valid appointments next week
+- `backfill_appointment_content.py` — rebuilds Appointment.content for all records
+
+Run with:
+
+```powershell
+cd backend
+py seed_demo_users_and_appointments.py
+py backfill_appointment_content.py
+```
+
+
+## Troubleshooting
+
+- SQLAlchemy/psycopg import errors in editor
+	- Ensure you’ve activated the venv where dependencies are installed
+- Cannot connect to Postgres
+	- Verify `DATABASE_URL` and that the database exists and is reachable
+- New endpoints 404 after code change
+	- Restart the backend development server
+- Timezone drift
+	- The system uses local‑naive ISO strings on the admin UI; the API treats appointment windows as local time ranges
+
+
+## License
+
+Proprietary — internal project. Do not distribute.
